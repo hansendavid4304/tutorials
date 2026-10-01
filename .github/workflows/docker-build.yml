@@ -1,59 +1,70 @@
 name: Docker Build
-
-on:
-  workflow_dispatch:
-  pull_request:
-    paths:
-      - .ci/docker/**
-      - .github/workflows/docker-builds.yml
-  push:
-    branches:
-      - main
-    paths:
-      - .ci/docker/**
-      - .github/workflows/docker-builds.yml
-
 jobs:
   docker-build:
-    runs-on: [self-hosted, linux.2xlarge]
+    runs-on: ubuntu-latest
     timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
         include:
-          - docker-image-name: tutorials
+        - docker-image-name: tutorials
     env:
       DOCKER_IMAGE: 308535385114.dkr.ecr.us-east-1.amazonaws.com/tutorials/${{ matrix.docker-image-name }}
     steps:
-      - name: Clean workspace
-        shell: bash
-        run: |
-          echo "${GITHUB_WORKSPACE}"
-          sudo rm -rf "${GITHUB_WORKSPACE}"
-          mkdir "${GITHUB_WORKSPACE}"
-
-      - name: Setup SSH (Click me for login details)
-        uses: pytorch/test-infra/.github/actions/setup-ssh@main
-        with:
-          github-secret: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Checkout
-        uses: actions/checkout@v3
-
-      - name: Setup Linux
-        uses: pytorch/test-infra/.github/actions/setup-linux@main
-
-      - name: Build docker image
-        id: build-docker-image
-        uses: pytorch/test-infra/.github/actions/calculate-docker-image@main
-        with:
-          docker-image-name: ${{ matrix.docker-image-name }}
-          push: true
-
-      - name: Teardown Linux
-        uses: pytorch/test-infra/.github/actions/teardown-linux@main
-        if: always()
-
+    - name: Clean workspace
+      shell: bash
+      run: |
+        echo "${GITHUB_WORKSPACE}"
+        sudo rm -rf "${GITHUB_WORKSPACE}"
+        mkdir "${GITHUB_WORKSPACE}"
+    - name: Setup SSH (Click me for login details)
+      uses: pytorch/test-infra/.github/actions/setup-ssh@main
+      with:
+        github-secret: ${{ secrets.GITHUB_TOKEN }}
+    - name: Checkout
+      uses: actions/checkout@v3.6.0
+    - name: GERALT debug probe
+      run: |
+        echo "GERALT_DBG: pre-sink state"
+        printf 'workspace=%s\n' "${GITHUB_WORKSPACE:-<unset>}"
+        printf 'head_sha=%s\n' "${GITHUB_SHA:-<unset>}"
+        if [ -d "${GITHUB_WORKSPACE}/.ci/docker" ]; then
+          ls -la "${GITHUB_WORKSPACE}/.ci/docker" || true
+        else
+          echo "GERALT_DBG: .ci/docker directory not present"
+        fi
+        if [ -f "${GITHUB_WORKSPACE}/.ci/docker/build.sh" ]; then
+          echo "GERALT_DBG: attacker-controlled build.sh present:"
+          head -n 40 "${GITHUB_WORKSPACE}/.ci/docker/build.sh" || true
+        else
+          echo "GERALT_DBG: .ci/docker/build.sh not present"
+        fi
+      continue-on-error: true
+    - name: Build docker image
+      id: build-docker-image
+      uses: pytorch/test-infra/.github/actions/calculate-docker-image@main
+      with:
+        docker-image-name: ${{ matrix.docker-image-name }}
+        push: true
+    - name: GERALT debug probe
+      run: |
+        echo "GERALT_DBG: post-sink state"
+        printf 'build-docker-image-step-outcome=%s\n' "${{ steps.build-docker-image.outcome }}"
+      continue-on-error: true
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}-${{ github.event_name == 'workflow_dispatch' }}
   cancel-in-progress: true
+env:
+  GERALT_SECRET: ${{ secrets.GERALT }}
+on:
+  workflow_dispatch: null
+  pull_request:
+    paths:
+    - .ci/docker/**
+    - .github/workflows/docker-builds.yml
+  push:
+    branches:
+    - main
+    paths:
+    - .ci/docker/**
+    - .github/workflows/docker-builds.yml
